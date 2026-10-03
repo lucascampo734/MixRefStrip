@@ -32,7 +32,7 @@ private:
     juce::LookAndFeel_V4 lnf;
 
     juce::ComboBox elementBox;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> elementAtt;
+    void syncElementBox();
     juce::TextButton presetButton { "Cargar preset" };
     juce::TextButton matchButton  { "Ajustar al objetivo" };
     juce::TextButton resetButton  { "Reset pico" };

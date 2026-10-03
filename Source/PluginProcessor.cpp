@@ -2,23 +2,97 @@
 #include "PluginEditor.h"
 
 //==============================================================================
-// Tabla de elementos. Kick, bajo, clap, hats y synths salen del checklist;
-// percusion, pads y vocal son puntos de partida razonables para el estilo.
-const std::array<ElementPreset, 9>& getElementPresets()
+// Tabla de elementos: rangos de la hoja "Niveles de mezcla" (progressive / melodic).
+// El EQ de cada elemento es un punto de partida segun el tipo de sonido.
+namespace
 {
-    //                     nombre          obj    min    max    HPF   barroHz dB    Q    presHz presdB aireHz aire dB mono   duck  prof
-    static const std::array<ElementPreset, 9> presets {{
-        { "Kick",          -10.0f, -11.0f,  -9.0f,  28.0f, 320.0f, -3.0f, 1.2f, 3000.0f,  1.5f, 12000.0f, 0.0f,  true,  false, 0.0f },
-        { "Bajo / Sub",    -13.0f, -14.0f, -12.0f,  30.0f, 250.0f, -2.0f, 1.0f, 1200.0f,  0.0f, 10000.0f, 0.0f,  true,  true,  8.0f },
-        { "Clap / Snare",  -17.0f, -18.0f, -16.0f, 150.0f, 400.0f, -3.0f, 1.0f, 3000.0f,  1.5f, 10000.0f, 1.0f,  false, false, 0.0f },
-        { "Hats",          -22.0f, -24.0f, -20.0f, 400.0f, 500.0f,  0.0f, 1.0f, 7000.0f, -1.5f, 12000.0f, 1.0f,  false, false, 0.0f },
-        { "Percusión",    -20.0f, -22.0f, -18.0f, 200.0f, 350.0f, -2.0f, 1.0f, 3000.0f,  0.0f, 11000.0f, 1.0f,  false, false, 0.0f },
-        { "Synths / Arps", -18.0f, -20.0f, -16.0f, 150.0f, 300.0f, -3.0f, 1.0f, 2500.0f,  1.0f, 12000.0f, 1.0f,  false, true,  4.0f },
-        { "Pads / Atmos",  -22.0f, -24.0f, -20.0f, 200.0f, 300.0f, -3.0f, 0.8f, 2500.0f,  0.0f, 12000.0f, 1.5f,  false, true,  5.0f },
-        { "Vocal / Chops", -15.0f, -17.0f, -13.0f, 100.0f, 300.0f, -2.0f, 1.0f, 3500.0f,  2.0f, 12000.0f, 2.0f,  false, false, 0.0f },
-        { "Toms",          -17.0f, -19.0f, -15.0f,  60.0f, 400.0f, -2.5f, 1.2f, 4000.0f,  1.5f, 10000.0f, 0.0f,  false, false, 0.0f },
-    }};
+    struct EqTemplate { float hpf, mudF, mudG, mudQ, presF, presG, airF, airG; bool mono, duck; float depth; };
+
+    //                         HPF   barroHz  dB    Q    presHz  dB    aireHz  dB   mono   duck   prof
+    const EqTemplate tKick   {  28, 320, -3.0f, 1.2f, 3000,  1.5f, 12000,  0.0f, true,  false, 0 };
+    const EqTemplate tBass   {  30, 250, -2.0f, 1.0f, 1200,  0.0f, 10000,  0.0f, true,  true,  8 };
+    const EqTemplate tSub    {  25, 300, -3.0f, 1.0f, 1500,  0.0f,  8000, -3.0f, true,  true,  8 };
+    const EqTemplate tMidB   {  40, 300, -2.0f, 1.0f, 1500,  1.0f, 10000,  0.0f, true,  true,  6 };
+    const EqTemplate tReese  {  35, 300, -2.0f, 1.0f, 2000,  0.0f, 10000,  0.0f, true,  true,  6 };
+    const EqTemplate tClap   { 150, 400, -3.0f, 1.0f, 3000,  1.5f, 10000,  1.0f, false, false, 0 };
+    const EqTemplate tPerc   { 200, 350, -2.0f, 1.0f, 3000,  0.0f, 11000,  1.0f, false, false, 0 };
+    const EqTemplate tHat    { 400, 500,  0.0f, 1.0f, 7000, -1.5f, 12000,  1.0f, false, false, 0 };
+    const EqTemplate tRide   { 300, 500,  0.0f, 1.0f, 6000, -1.0f, 12000,  1.0f, false, false, 0 };
+    const EqTemplate tTom    {  60, 400, -2.5f, 1.2f, 4000,  1.5f, 10000,  0.0f, false, false, 0 };
+    const EqTemplate tLead   { 120, 300, -2.0f, 1.0f, 3000,  1.5f, 12000,  1.0f, false, true,  3 };
+    const EqTemplate tSynth  { 150, 300, -3.0f, 1.0f, 2500,  1.0f, 12000,  1.0f, false, true,  4 };
+    const EqTemplate tPad    { 200, 300, -3.0f, 0.8f, 2500,  0.0f, 12000,  1.5f, false, true,  5 };
+    const EqTemplate tVocal  { 100, 300, -2.0f, 1.0f, 3500,  2.0f, 12000,  2.0f, false, false, 0 };
+    const EqTemplate tFx     { 200, 400, -2.0f, 1.0f, 3000,  0.0f, 12000,  0.0f, false, true,  4 };
+    const EqTemplate tImpact {  30, 300, -2.0f, 1.0f, 3000,  0.0f, 10000,  0.0f, true,  false, 0 };
+    const EqTemplate tReturn { 250, 400, -2.0f, 1.0f, 3000,  0.0f, 10000, -1.0f, false, true,  4 };
+
+    const char* gDrums = "Batería y percusión";
+    const char* gBass  = "Bajos";
+    const char* gMusic = "Elementos musicales";
+    const char* gBack  = "Fondo, atmósferas y vocales";
+    const char* gFx    = "FX, transiciones y detalles";
+
+    ElementPreset make (const char* group, const char* name, float a, float b, const EqTemplate& t)
+    {
+        const float lo = std::min (a, b), hi = std::max (a, b);
+        return { name, (lo + hi) * 0.5f, lo, hi, t.hpf, t.mudF, t.mudG, t.mudQ, t.presF, t.presG,
+                 t.airF, t.airG, t.mono, t.duck, t.depth, group };
+    }
+}
+
+const std::vector<ElementPreset>& getElementPresets()
+{
+    static const std::vector<ElementPreset> presets {
+        // 0-8: mismos lugares que en la v1.2 (compatibilidad con sesiones guardadas)
+        make (gDrums, "Kick",                  -11, -9,  tKick),   // la hoja dice -10: margen de 1 dB
+        make (gBass,  "Bass principal",        -15, -14, tBass),
+        make (gDrums, "Clap / Snare",          -18, -14, tClap),
+        make (gDrums, "Closed hat",            -20, -16, tHat),
+        make (gDrums, "Percusión principal",   -16, -12, tPerc),
+        make (gMusic, "Lead / Synth principal",-19, -15, tLead),
+        make (gBack,  "Pads",                  -22, -19, tPad),
+        make (gBack,  "Vocal principal",       -18, -14, tVocal),
+        make (gDrums, "Toms",                  -18, -14, tTom),
+        // 9 en adelante: nuevos
+        make (gDrums, "Percusión secundaria",  -20, -16, tPerc),
+        make (gDrums, "Open hat",              -19, -15, tHat),
+        make (gDrums, "Shakers",               -22, -18, tHat),
+        make (gDrums, "Rides",                 -22, -18, tRide),
+        make (gBass,  "Sub bass",              -18, -15, tSub),
+        make (gBass,  "Bass grupo / Layer",    -20, -16, tBass),
+        make (gBass,  "Reese bass",            -22, -18, tReese),
+        make (gBass,  "Mid bass",              -20, -16, tMidB),
+        make (gMusic, "Arp",                   -21, -17, tSynth),
+        make (gMusic, "Pluck",                 -20, -16, tSynth),
+        make (gMusic, "Chords / Acordes",      -22, -18, tSynth),
+        make (gMusic, "Piano / Keys",          -22, -18, tSynth),
+        make (gMusic, "Guitars",               -22, -18, tSynth),
+        make (gBack,  "Strings",               -23, -18, tPad),
+        make (gBack,  "Atmósferas",            -28, -22, tPad),
+        make (gBack,  "Textures",              -30, -22, tPad),
+        make (gBack,  "Vocal chops",           -22, -17, tVocal),
+        make (gFx,    "Risers",                -24, -18, tFx),
+        make (gFx,    "Impacts",               -20, -14, tImpact),
+        make (gFx,    "Downsweeps",            -24, -18, tFx),
+        make (gFx,    "Noise / Sweeps",        -26, -20, tFx),
+        make (gFx,    "Ear candy",             -25, -18, tFx),
+        make (gFx,    "Reverb returns",        -30, -20, tReturn),
+        make (gFx,    "Delay returns",         -26, -18, tReturn),
+    };
     return presets;
+}
+
+const std::vector<int>& getElementDisplayOrder()
+{
+    static const std::vector<int> order {
+        0, 2, 4, 9, 3, 10, 11, 8, 12,      // bateria y percusion
+        1, 13, 14, 15, 16,                 // bajos
+        5, 17, 18, 19, 20, 21,             // elementos musicales
+        6, 22, 23, 24, 7, 25,              // fondo, atmosferas y vocales
+        26, 27, 28, 29, 30, 31, 32         // fx
+    };
+    return order;
 }
 
 //==============================================================================

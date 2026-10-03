@@ -38,11 +38,35 @@ MixRefEditor::MixRefEditor (MixRefProcessor& p)
     lnf.setColour (juce::ToggleButton::tickColourId, Colours::accent);
     setLookAndFeel (&lnf);
 
-    // Elemento
-    for (size_t i = 0; i < getElementPresets().size(); ++i)
-        elementBox.addItem (utf8 (getElementPresets()[i].name), (int) i + 1);
-    elementAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (proc.apvts, "element", elementBox);
-    elementBox.onChange = [this] { repaint(); };
+    // Elemento: menu agrupado como en la hoja de referencia
+    {
+        const auto& all = getElementPresets();
+        juce::String lastGroup;
+        for (int idx : getElementDisplayOrder())
+        {
+            const auto& e = all[(size_t) idx];
+            const auto group = utf8 (e.group);
+            if (group != lastGroup)
+            {
+                elementBox.addSectionHeading (group);
+                lastGroup = group;
+            }
+            elementBox.addItem (utf8 (e.name), idx + 1);
+        }
+    }
+    elementBox.onChange = [this]
+    {
+        const int idx = elementBox.getSelectedId() - 1;
+        if (idx < 0) return;
+        if (auto* param = proc.apvts.getParameter ("element"))
+        {
+            param->beginChangeGesture();
+            param->setValueNotifyingHost (param->convertTo0to1 ((float) idx));
+            param->endChangeGesture();
+        }
+        repaint();
+    };
+    syncElementBox();
     addAndMakeVisible (elementBox);
 
     presetButton.setTooltip ("Carga el EQ, graves mono y ducker sugeridos para el elemento elegido");
@@ -105,9 +129,21 @@ MixRefEditor::Knob& MixRefEditor::addKnob (const juce::String& paramId, const ju
     return *knobs.back();
 }
 
+void MixRefEditor::syncElementBox()
+{
+    const int idx = juce::roundToInt (proc.apvts.getRawParameterValue ("element")->load());
+    if (elementBox.getSelectedId() != idx + 1)
+    {
+        elementBox.setSelectedId (idx + 1, juce::dontSendNotification);
+        repaint();
+    }
+}
+
 //==============================================================================
 void MixRefEditor::timerCallback()
 {
+    syncElementBox();
+
     const float peakLin = proc.meterPeak.exchange (0.0f);
     const float peakDb = juce::Decibels::gainToDecibels (peakLin, -100.0f);
     levelDb = peakDb > levelDb ? peakDb : juce::jmax (peakDb, levelDb - 0.8f); // caida ~24 dB/s
@@ -273,7 +309,7 @@ void MixRefEditor::resized()
     auto h = header.reduced (14, 13);
     presetButton.setBounds (h.removeFromRight (130));
     h.removeFromRight (8);
-    elementBox.setBounds (h.removeFromRight (180));
+    elementBox.setBounds (h.removeFromRight (230));
 
     meterPanel = area.removeFromLeft (250);
     area.removeFromLeft (10);

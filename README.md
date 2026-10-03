@@ -2,7 +2,7 @@
 
 Plugin VST3 / AU para Mac (Apple Silicon e Intel) que junta tres herramientas del checklist de mezcla, con el kick de referencia a -10 dBFS:
 
-1. **Medidor de referencia.** Elegís qué es el canal (kick, bajo, clap, hats, percusión, synths, pads, vocal, toms) y te marca en verde si el pico está en el rango del checklist, en amarillo si está cerca y en rojo si se pasa. El botón **Ajustar al objetivo** mueve la ganancia sola para que el pico quede en el valor ideal.
+1. **Medidor de referencia.** Elegís qué es el canal entre los 33 elementos de la hoja de referencia y te marca en verde si el pico está en el rango del checklist, en amarillo si está cerca y en rojo si se pasa. El botón **Ajustar al objetivo** mueve la ganancia sola para que el pico quede en el valor ideal.
 2. **Channel strip.** Pasa altos de 24 dB/oct, corte de barro, presencia, aire y graves en mono. **Cargar preset** pone los valores de partida del elemento elegido.
 3. **Ducker de sidechain.** Baja el volumen del canal cuando entra el kick por la entrada de sidechain.
 
@@ -48,16 +48,44 @@ xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/"MixRef Strip.vst3"
 
 ## Valores por elemento
 
-| Elemento | Pico objetivo | Rango verde |
-|---|---|---|
-| Kick | -10 | -11 a -9 |
-| Bajo / Sub | -13 | -14 a -12 |
-| Clap / Snare | -17 | -18 a -16 |
-| Hats | -22 | -24 a -20 |
-| Percusión | -20 | -22 a -18 |
-| Synths / Arps | -18 | -20 a -16 |
-| Pads / Atmos | -22 | -24 a -20 |
-| Vocal / Chops | -15 | -17 a -13 |
-| Toms | -17 | -19 a -15 |
+Rangos de la hoja **Niveles de mezcla** (progressive house / melodic). El objetivo es el punto medio de cada rango; el kick tiene 1 dB de margen alrededor de -10.
 
-Se cambian en `Source/PluginProcessor.cpp`, en la tabla `getElementPresets()`. Son orientativos: siempre escuchá y compará con tus referencias.
+| Grupo | Elemento | Rango (pico dBFS) |
+|---|---|---|
+| Batería y percusión | Kick | -10 (verde de -11 a -9) |
+| | Clap / Snare | -14 a -18 |
+| | Percusión principal | -12 a -16 |
+| | Percusión secundaria | -16 a -20 |
+| | Closed hat | -16 a -20 |
+| | Open hat | -15 a -19 |
+| | Shakers | -18 a -22 |
+| | Toms | -14 a -18 |
+| | Rides | -18 a -22 |
+| Bajos | Bass principal | -14 a -15 |
+| | Sub bass | -15 a -18 |
+| | Bass grupo / Layer | -16 a -20 |
+| | Reese bass | -18 a -22 |
+| | Mid bass | -16 a -20 |
+| Elementos musicales | Lead / Synth principal | -15 a -19 |
+| | Arp | -17 a -21 |
+| | Pluck | -16 a -20 |
+| | Chords / Acordes | -18 a -22 |
+| | Piano / Keys | -18 a -22 |
+| | Guitars | -18 a -22 |
+| Fondo, atmósferas y vocales | Pads | -19 a -22 |
+| | Strings | -18 a -23 |
+| | Atmósferas | -22 a -28 |
+| | Textures | -22 a -30 |
+| | Vocal principal | -14 a -18 |
+| | Vocal chops | -17 a -22 |
+| FX, transiciones y detalles | Risers | -18 a -24 |
+| | Impacts | -14 a -20 |
+| | Downsweeps | -18 a -24 |
+| | Noise / Sweeps | -20 a -26 |
+| | Ear candy | -18 a -25 |
+| | Reverb returns | -20 a -30 |
+| | Delay returns | -18 a -26 |
+
+Se cambian en `Source/PluginProcessor.cpp`, en `getElementPresets()`. Para agregar elementos, sumalos **al final** de esa lista (así las sesiones guardadas no cambian) y agregá su número en `getElementDisplayOrder()`.
+
+Estos niveles son puntos de partida, no reglas fijas: el oído y el contexto son lo más importante.

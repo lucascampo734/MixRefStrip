@@ -6,7 +6,7 @@
 #include <atomic>
 #include <vector>
 
-// Valores de partida por elemento (del checklist de mezcla, kick de referencia a -10 dBFS)
+// Valores de partida por elemento (hoja de referencia de niveles, kick a -10 dBFS)
 struct ElementPreset
 {
     const char* name;
@@ -18,9 +18,13 @@ struct ElementPreset
     bool  mono;                             // graves en mono
     bool  duck;                             // sidechain activado
     float duckDepth;                        // dB de reduccion
+    const char* group;                      // grupo del menu
 };
 
-const std::array<ElementPreset, 9>& getElementPresets();
+// Orden del parametro (no cambiar: las sesiones guardadas usan este indice)
+const std::vector<ElementPreset>& getElementPresets();
+// Orden en que se muestran en el menu, agrupados como en la hoja
+const std::vector<int>& getElementDisplayOrder();
 
 // Textos con tildes y eñe
 inline juce::String utf8 (const char* s) { return juce::String::fromUTF8 (s); }

@@ -197,7 +197,8 @@ void EqGraph::paint (juce::Graphics& g)
             float db = specMinDb;
             for (int b = b0; b <= b1; ++b) db = juce::jmax (db, spectrumDb[(size_t) b]);
             // inclinación de 4.5 dB/oct para que se lea parecido a como suena
-            db += 4.5f * std::log2 (juce::jmax (f0, 20.0f) / 1000.0f);
+            if (db > specMinDb + 1.0f) // sin señal, no levantar el piso
+                db += 4.5f * std::log2 (juce::jmax (f0, 20.0f) / 1000.0f);
             spec.lineTo (x, yForSpectrumDb (db));
         }
         spec.lineTo (r.getRight(), r.getBottom());

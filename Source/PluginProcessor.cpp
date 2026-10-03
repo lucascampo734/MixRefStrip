@@ -4,18 +4,19 @@
 //==============================================================================
 // Tabla de elementos. Kick, bajo, clap, hats y synths salen del checklist;
 // percusion, pads y vocal son puntos de partida razonables para el estilo.
-const std::array<ElementPreset, 8>& getElementPresets()
+const std::array<ElementPreset, 9>& getElementPresets()
 {
     //                     nombre          obj    min    max    HPF   barroHz dB    Q    presHz presdB aireHz aire dB mono   duck  prof
-    static const std::array<ElementPreset, 8> presets {{
+    static const std::array<ElementPreset, 9> presets {{
         { "Kick",          -10.0f, -11.0f,  -9.0f,  28.0f, 320.0f, -3.0f, 1.2f, 3000.0f,  1.5f, 12000.0f, 0.0f,  true,  false, 0.0f },
         { "Bajo / Sub",    -13.0f, -14.0f, -12.0f,  30.0f, 250.0f, -2.0f, 1.0f, 1200.0f,  0.0f, 10000.0f, 0.0f,  true,  true,  8.0f },
         { "Clap / Snare",  -17.0f, -18.0f, -16.0f, 150.0f, 400.0f, -3.0f, 1.0f, 3000.0f,  1.5f, 10000.0f, 1.0f,  false, false, 0.0f },
         { "Hats",          -22.0f, -24.0f, -20.0f, 400.0f, 500.0f,  0.0f, 1.0f, 7000.0f, -1.5f, 12000.0f, 1.0f,  false, false, 0.0f },
-        { "Percusion",     -20.0f, -22.0f, -18.0f, 200.0f, 350.0f, -2.0f, 1.0f, 3000.0f,  0.0f, 11000.0f, 1.0f,  false, false, 0.0f },
+        { "Percusión",    -20.0f, -22.0f, -18.0f, 200.0f, 350.0f, -2.0f, 1.0f, 3000.0f,  0.0f, 11000.0f, 1.0f,  false, false, 0.0f },
         { "Synths / Arps", -18.0f, -20.0f, -16.0f, 150.0f, 300.0f, -3.0f, 1.0f, 2500.0f,  1.0f, 12000.0f, 1.0f,  false, true,  4.0f },
         { "Pads / Atmos",  -22.0f, -24.0f, -20.0f, 200.0f, 300.0f, -3.0f, 0.8f, 2500.0f,  0.0f, 12000.0f, 1.5f,  false, true,  5.0f },
         { "Vocal / Chops", -15.0f, -17.0f, -13.0f, 100.0f, 300.0f, -2.0f, 1.0f, 3500.0f,  2.0f, 12000.0f, 2.0f,  false, false, 0.0f },
+        { "Toms",          -17.0f, -19.0f, -15.0f,  60.0f, 400.0f, -2.5f, 1.2f, 4000.0f,  1.5f, 10000.0f, 0.0f,  false, false, 0.0f },
     }};
     return presets;
 }
@@ -52,7 +53,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout MixRefProcessor::createLayou
     std::vector<std::unique_ptr<RangedAudioParameter>> p;
 
     StringArray names;
-    for (auto& e : getElementPresets()) names.add (e.name);
+    for (auto& e : getElementPresets()) names.add (utf8 (e.name));
 
     auto hz = AudioParameterFloatAttributes().withStringFromValueFunction (fmtHz);
     auto db = AudioParameterFloatAttributes().withStringFromValueFunction (fmtDb);
@@ -294,9 +295,38 @@ void MixRefProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Midi
         }
     }
 
+    // Copia mono de la salida para el analizador
+    {
+        int s1, b1, s2, b2;
+        analyserFifo.prepareToWrite (n, s1, b1, s2, b2);
+        auto put = [&] (int start, int size, int offset)
+        {
+            for (int k = 0; k < size; ++k)
+            {
+                const int i = offset + k;
+                float v = data[0][i];
+                if (numCh > 1) v = 0.5f * (v + data[1][i]);
+                analyserBuffer[(size_t) (start + k)] = v;
+            }
+        };
+        put (s1, b1, 0);
+        put (s2, b2, b1);
+        analyserFifo.finishedWrite (b1 + b2);
+    }
+
     atomicMax (meterPeak, peak);
     atomicMax (meterGR, maxGR);
     atomicMax (meterSC, scPeak);
+}
+
+int MixRefProcessor::pullAnalyserSamples (float* dest, int maxNum)
+{
+    int s1, b1, s2, b2;
+    analyserFifo.prepareToRead (maxNum, s1, b1, s2, b2);
+    for (int k = 0; k < b1; ++k) dest[k]      = analyserBuffer[(size_t) (s1 + k)];
+    for (int k = 0; k < b2; ++k) dest[b1 + k] = analyserBuffer[(size_t) (s2 + k)];
+    analyserFifo.finishedRead (b1 + b2);
+    return b1 + b2;
 }
 
 //==============================================================================

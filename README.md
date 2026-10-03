@@ -2,9 +2,11 @@
 
 Plugin VST3 / AU para Mac (Apple Silicon e Intel) que junta tres herramientas del checklist de mezcla, con el kick de referencia a -10 dBFS:
 
-1. **Medidor de referencia.** Elegís qué es el canal (kick, bajo, clap, hats, percusión, synths, pads, vocal) y te marca en verde si el pico está en el rango del checklist, en amarillo si está cerca y en rojo si se pasa. El botón **Ajustar al objetivo** mueve la ganancia sola para que el pico quede en el valor ideal.
+1. **Medidor de referencia.** Elegís qué es el canal (kick, bajo, clap, hats, percusión, synths, pads, vocal, toms) y te marca en verde si el pico está en el rango del checklist, en amarillo si está cerca y en rojo si se pasa. El botón **Ajustar al objetivo** mueve la ganancia sola para que el pico quede en el valor ideal.
 2. **Channel strip.** Pasa altos de 24 dB/oct, corte de barro, presencia, aire y graves en mono. **Cargar preset** pone los valores de partida del elemento elegido.
 3. **Ducker de sidechain.** Baja el volumen del canal cuando entra el kick por la entrada de sidechain.
+
+4. **Gráfico del EQ (v1.1).** Curva de respuesta en vivo con el analizador de espectro de fondo. Los puntos se arrastran con el mouse: 1 pasa altos, 2 barro, 3 presencia, 4 aire y M el corte de graves mono. Doble clic vuelve la ganancia a 0 dB y la rueda del mouse sobre el punto 2 cambia el Q.
 
 Cadena de señal: ganancia → EQ → graves mono → ducker → medidor.
 
@@ -56,5 +58,6 @@ xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/"MixRef Strip.vst3"
 | Synths / Arps | -18 | -20 a -16 |
 | Pads / Atmos | -22 | -24 a -20 |
 | Vocal / Chops | -15 | -17 a -13 |
+| Toms | -17 | -19 a -15 |
 
 Se cambian en `Source/PluginProcessor.cpp`, en la tabla `getElementPresets()`. Son orientativos: siempre escuchá y compará con tus referencias.

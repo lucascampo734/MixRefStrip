@@ -1,6 +1,7 @@
 #pragma once
 
 #include "PluginProcessor.h"
+#include "EqGraph.h"
 #include <memory>
 #include <vector>
 
@@ -38,6 +39,8 @@ private:
 
     juce::ToggleButton eqOnButton { "EQ" }, monoButton { "Graves mono" }, duckOnButton { "Ducker" };
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> eqOnAtt, monoAtt, duckOnAtt;
+
+    EqGraph eqGraph { proc };
 
     std::vector<std::unique_ptr<Knob>> knobs;
     Knob* trimKnob = nullptr;

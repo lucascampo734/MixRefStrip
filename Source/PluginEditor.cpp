@@ -1,4 +1,5 @@
 #include "PluginEditor.h"
+#include <array>
 
 namespace Colours
 {
@@ -39,7 +40,7 @@ MixRefEditor::MixRefEditor (MixRefProcessor& p)
 
     // Elemento
     for (size_t i = 0; i < getElementPresets().size(); ++i)
-        elementBox.addItem (getElementPresets()[i].name, (int) i + 1);
+        elementBox.addItem (utf8 (getElementPresets()[i].name), (int) i + 1);
     elementAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (proc.apvts, "element", elementBox);
     elementBox.onChange = [this] { repaint(); };
     addAndMakeVisible (elementBox);
@@ -77,7 +78,9 @@ MixRefEditor::MixRefEditor (MixRefProcessor& p)
                   &addKnob ("duckAttack", "Ataque"),
                   &addKnob ("duckRelease", "Release") };
 
-    setSize (920, 500);
+    addAndMakeVisible (eqGraph);
+
+    setSize (1000, 620);
     startTimerHz (30);
 }
 
@@ -116,6 +119,8 @@ void MixRefEditor::timerCallback()
     const float sc = juce::Decibels::gainToDecibels (proc.meterSC.exchange (0.0f), -100.0f);
     scDb = sc > scDb ? sc : scDb - 1.5f;
 
+    eqGraph.updateSpectrum();
+    eqGraph.repaint();
     repaint (meterPanel);
     repaint (duckPanel);
 }
@@ -132,7 +137,7 @@ static juce::Colour statusColour (float db, const ElementPreset& e)
 
 static juce::String statusText (float db, const ElementPreset& e)
 {
-    if (db < -80.0f)          return "Sin senal";
+    if (db < -80.0f)          return utf8 ("Sin señal");
     if (db > e.highDb)        return "Alto: bajar " + juce::String (db - e.targetDb, 1) + " dB";
     if (db < e.lowDb)         return "Bajo: subir " + juce::String (e.targetDb - db, 1) + " dB";
     return "En rango";
@@ -187,7 +192,7 @@ void MixRefEditor::paintDuckMeter (juce::Graphics& g, juce::Rectangle<int> area)
     auto r = area.toFloat();
     g.setColour (Colours::dim);
     g.setFont (juce::FontOptions (12.0f));
-    g.drawText ("Reduccion", r.removeFromTop (16), juce::Justification::centredLeft);
+    g.drawText (utf8 ("Reducción"), r.removeFromTop (16), juce::Justification::centredLeft);
 
     auto bar = r.removeFromTop (14);
     g.setColour (Colours::bg);
@@ -203,8 +208,8 @@ void MixRefEditor::paintDuckMeter (juce::Graphics& g, juce::Rectangle<int> area)
     g.setColour (hasSc ? Colours::ok : Colours::warn);
     g.fillEllipse (r.getX(), r.getY() + 4, 9, 9);
     g.setColour (Colours::text);
-    g.drawText (hasSc ? "Sidechain: recibiendo senal (" + juce::String (scDb, 0) + " dB)"
-                      : "Sidechain: sin senal",
+    g.drawText (hasSc ? utf8 ("Sidechain: recibiendo señal (") + juce::String (scDb, 0) + " dB)"
+                      : utf8 ("Sidechain: sin señal"),
                 r.withTrimmedLeft (16).removeFromTop (18), juce::Justification::centredLeft);
 }
 
@@ -240,7 +245,7 @@ void MixRefEditor::paint (juce::Graphics& g)
     auto info = juce::Rectangle<int> (meterArea.getRight() + 16, meterArea.getY(), meterPanel.getRight() - meterArea.getRight() - 26, 120);
     g.setFont (juce::FontOptions (12.0f));
     g.setColour (Colours::dim);
-    g.drawText ("Pico maximo", info.removeFromTop (16), juce::Justification::centredLeft);
+    g.drawText (utf8 ("Pico máximo"), info.removeFromTop (16), juce::Justification::centredLeft);
     g.setFont (juce::FontOptions (24.0f, juce::Font::bold));
     g.setColour (statusColour (maxDb, e));
     g.drawText (maxDb < -80.0f ? juce::String ("--") : juce::String (maxDb, 1), info.removeFromTop (30), juce::Justification::centredLeft);
@@ -253,7 +258,7 @@ void MixRefEditor::paint (juce::Graphics& g)
 
     g.setColour (Colours::dim);
     g.setFont (juce::FontOptions (11.0f));
-    g.drawText ("Valores orientativos: escucha y compara con tus referencias.",
+    g.drawText (utf8 ("Valores orientativos: escuchá y compará con tus referencias."),
                 getLocalBounds().removeFromBottom (22).withTrimmedLeft (20), juce::Justification::centredLeft);
 }
 
@@ -272,7 +277,7 @@ void MixRefEditor::resized()
 
     meterPanel = area.removeFromLeft (250);
     area.removeFromLeft (10);
-    duckPanel = area.removeFromRight (230);
+    duckPanel = area.removeFromRight (220);
     area.removeFromRight (10);
     eqPanel = area;
 
@@ -297,23 +302,26 @@ void MixRefEditor::resized()
         k->slider.setBounds (cell);
     };
 
-    // Panel EQ: 4 columnas x 2 filas + fila de graves mono
+    // Panel EQ: gráfico arriba, perillas abajo (5 + 4)
     {
         auto r = eqPanel.reduced (12);
         auto top = r.removeFromTop (24);
         eqOnButton.setBounds (top.removeFromLeft (70));
         top.removeFromLeft (10);
         monoButton.setBounds (top.removeFromLeft (130));
-        r.removeFromTop (6);
+        r.removeFromTop (8);
+        eqGraph.setBounds (r.removeFromTop (220));
+        r.removeFromTop (8);
 
-        const int rowH = (r.getHeight()) / 3;
-        const int colW = r.getWidth() / 4;
-        for (int i = 0; i < 8; ++i)
-        {
-            const int row = i / 4, col = i % 4;
-            placeKnob (eqKnobs[(size_t) i], { r.getX() + col * colW, r.getY() + row * rowH, colW, rowH });
-        }
-        placeKnob (eqKnobs[8], { r.getX(), r.getY() + 2 * rowH, colW, rowH });
+        const int rowH = r.getHeight() / 2;
+        const int colW = r.getWidth() / 5;
+        const std::array<int, 5> row1 { 0, 1, 2, 3, 8 };   // HPF, barro Hz/dB/Q, mono
+        const std::array<int, 4> row2 { 4, 5, 6, 7 };      // presencia y aire
+        for (int c = 0; c < 5; ++c)
+            placeKnob (eqKnobs[(size_t) row1[(size_t) c]], { r.getX() + c * colW, r.getY(), colW, rowH });
+        const int offset = colW / 2;
+        for (int c = 0; c < 4; ++c)
+            placeKnob (eqKnobs[(size_t) row2[(size_t) c]], { r.getX() + offset + c * colW, r.getY() + rowH, colW, rowH });
     }
 
     // Panel ducker: 2 x 2 + medidor

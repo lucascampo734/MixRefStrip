@@ -4,6 +4,7 @@
 #include <juce_dsp/juce_dsp.h>
 #include <array>
 #include <atomic>
+#include <vector>
 
 // Valores de partida por elemento (del checklist de mezcla, kick de referencia a -10 dBFS)
 struct ElementPreset
@@ -19,7 +20,10 @@ struct ElementPreset
     float duckDepth;                        // dB de reduccion
 };
 
-const std::array<ElementPreset, 8>& getElementPresets();
+const std::array<ElementPreset, 9>& getElementPresets();
+
+// Textos con tildes y eñe
+inline juce::String utf8 (const char* s) { return juce::String::fromUTF8 (s); }
 
 class MixRefProcessor : public juce::AudioProcessor
 {
@@ -63,6 +67,9 @@ public:
     std::atomic<float> meterGR   { 0.0f };   // reduccion maxima del ducker (dB)
     std::atomic<float> meterSC   { 0.0f };   // pico lineal del sidechain
 
+    // Muestras de salida para el analizador de espectro
+    int pullAnalyserSamples (float* dest, int maxNum);
+
 private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
     void updateFilters (bool force);
@@ -75,6 +82,10 @@ private:
     juce::dsp::LinkwitzRileyFilter<float> lowSplit, highSplit;
     juce::SmoothedValue<float> trimGain;
     float duckEnv = 0.0f;
+
+    static constexpr int analyserFifoSize = 16384;
+    juce::AbstractFifo analyserFifo { analyserFifoSize };
+    std::vector<float> analyserBuffer = std::vector<float> ((size_t) analyserFifoSize, 0.0f);
 
     // cache para no recalcular coeficientes en cada bloque
     float cHpf = -1, cMudF = -1, cMudG = -100, cMudQ = -1, cPresF = -1, cPresG = -100,

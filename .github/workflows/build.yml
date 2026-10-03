@@ -8,7 +8,7 @@ jobs:
   build-mac:
     runs-on: macos-14
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Configurar
         run: cmake -B build -DCMAKE_BUILD_TYPE=Release
@@ -27,7 +27,7 @@ jobs:
           cd dist && ditto -c -k --keepParent "MixRef Strip.vst3" "../MixRefStrip-VST3.zip"
           ditto -c -k --keepParent "MixRef Strip.component" "../MixRefStrip-AU.zip"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: MixRefStrip-Mac
           path: |

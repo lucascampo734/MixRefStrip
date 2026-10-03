@@ -1,14 +1,26 @@
-# MixRef Strip
+# MixRef Strip v2.0
 
-Plugin VST3 / AU para Mac (Apple Silicon e Intel) que junta tres herramientas del checklist de mezcla, con el kick de referencia a -10 dBFS:
+Plugin VST3 / AU para Mac (Apple Silicon e Intel) para mezclar con referencias de nivel, con el kick a -10 dBFS:
 
-1. **Medidor de referencia.** Elegís qué es el canal entre los 33 elementos de la hoja de referencia y te marca en verde si el pico está en el rango del checklist, en amarillo si está cerca y en rojo si se pasa. El botón **Ajustar al objetivo** mueve la ganancia sola para que el pico quede en el valor ideal.
-2. **Channel strip.** Pasa altos de 24 dB/oct, corte de barro, presencia, aire y graves en mono. **Cargar preset** pone los valores de partida del elemento elegido.
+1. **Medidor de referencia.** Elegís qué es el canal entre los 33 elementos de la hoja de referencia y te marca en verde si el pico está en rango, en amarillo si está cerca y en rojo si se pasa. **Ajustar al objetivo** mueve la ganancia sola para dejar el pico en el valor ideal.
+2. **EQ de 8 bandas**, con las funciones de un EQ Eight:
+   - 8 tipos de filtro por banda: corte de graves 48 y 12 dB/oct, shelf de graves, campana, notch, shelf de agudos y corte de agudos 12 y 48 dB/oct.
+   - Botones 1 a 8 para prender y apagar cada banda; gráfico con la curva en vivo, el analizador de espectro y puntos que se arrastran.
+   - **Audición (auricular):** con el botón prendido, mantené apretado un punto o una perilla de la banda y escuchás solo la zona que toca. En los cortes y shelves escuchás justo lo que se saca.
+   - **Delta:** escuchás solo lo que el EQ saca o agrega.
+   - **Modos Estéreo, L/R y Mid/Side**, con 8 bandas propias para cada lado (botones L/R o Mid/Side para elegir cuál editás).
+   - **Adaptive Q:** el Q de las campanas se cierra cuando subís mucha ganancia.
+   - **Alta calidad (x2):** procesa el EQ al doble de frecuencia de muestreo, con agudos más naturales. Suma 49 muestras de latencia, que Ableton compensa solo.
+   - **Escala** (de -200 % a 200 %, invierte la curva en negativo) y **Salida EQ**.
+   - **Graves mono** debajo de la frecuencia que elijas.
+   - **Cargar preset** pone el EQ de partida del elemento elegido.
 3. **Ducker de sidechain.** Baja el volumen del canal cuando entra el kick por la entrada de sidechain.
 
-4. **Gráfico del EQ (v1.1).** Curva de respuesta en vivo con el analizador de espectro de fondo. Los puntos se arrastran con el mouse: 1 pasa altos, 2 barro, 3 presencia, 4 aire y M el corte de graves mono. Doble clic vuelve la ganancia a 0 dB y la rueda del mouse sobre el punto 2 cambia el Q.
-
 Cadena de señal: ganancia → EQ → graves mono → ducker → medidor.
+
+**Atajos del gráfico:** arrastrar un punto mueve frecuencia y ganancia (si la banda estaba apagada, se prende); la rueda del mouse sobre un punto cambia el Q; doble clic vuelve la ganancia a 0 dB.
+
+**Sesiones de versiones anteriores:** al abrirlas, el EQ de 4 bandas se pasa solo a las bandas 1, 3, 5 y 7 del EQ nuevo, con los mismos valores.
 
 ---
 
@@ -45,6 +57,8 @@ xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/"MixRef Strip.vst3"
 - **Preset:** elegí el elemento y tocá **Cargar preset**. Es un punto de partida, después ajustá con el oído.
 - **Ducker con el kick:** cargalo en el bajo (o synths/pads), activá **Ducker** y en el encabezado del dispositivo en Ableton desplegá la sección de sidechain y elegí la pista del kick como fuente. Cuando el indicador dice "Sidechain: recibiendo señal", subí la **Profundidad** (6 a 10 dB para el bajo, 3 a 5 para synths y pads) y ajustá el **Release** para que respire con el groove.
 - **Graves mono:** suma a mono todo lo que esté debajo de la frecuencia elegida (120 Hz por defecto). Ideal para bajo y kick.
+- **EQ con auricular:** prendé **Audición**, mantené apretado el punto de la banda y movelo buscando la frecuencia que molesta. Cuando la encontrás, soltás y bajás la ganancia.
+- **Mid/Side en pads y synths:** elegí **Mid/Side**, tocá **Side** y poné un corte de graves en 150-250 Hz: los graves quedan en el centro y el estéreo se limpia.
 
 ## Valores por elemento
 

@@ -9,25 +9,20 @@ namespace
     const juce::Colour specCol  { 0xff5b6275 };
 }
 
+juce::Colour EqGraph::bandColour (int band)
+{
+    static const std::array<juce::Colour, 8> cols {
+        juce::Colour (0xfff59e0b), juce::Colour (0xfffb923c), juce::Colour (0xfff87171), juce::Colour (0xfff472b6),
+        juce::Colour (0xff4ade80), juce::Colour (0xff2dd4bf), juce::Colour (0xff38bdf8), juce::Colour (0xffa78bfa) };
+    return cols[(size_t) juce::jlimit (0, 7, band)];
+}
+
 EqGraph::EqGraph (MixRefProcessor& p) : proc (p)
 {
-    nodes = {{
-        { "Pasa altos", "hpf",      nullptr,    nullptr, juce::Colour (0xfff59e0b), 0.0f },
-        { "Barro",      "mudFreq",  "mudGain",  "mudQ",  juce::Colour (0xfff87171), 0.0f },
-        { "Presencia",  "presFreq", "presGain", nullptr, juce::Colour (0xff4ade80), 0.0f },
-        { "Aire",       "airFreq",  "airGain",  nullptr, juce::Colour (0xff38bdf8), 0.0f },
-        { "Mono",       "monoFreq", nullptr,    nullptr, juce::Colour (0xffa78bfa), -14.0f },
-    }};
     setOpaque (true);
 }
 
 //==============================================================================
-double EqGraph::sampleRate() const
-{
-    const double sr = proc.getSampleRate();
-    return sr > 0.0 ? sr : 48000.0;
-}
-
 juce::Rectangle<float> EqGraph::plotArea() const
 {
     return getLocalBounds().toFloat().reduced (1.0f).withTrimmedBottom (16.0f).withTrimmedLeft (26.0f);
@@ -36,7 +31,7 @@ juce::Rectangle<float> EqGraph::plotArea() const
 float EqGraph::xForFreq (float f) const
 {
     auto r = plotArea();
-    const float t = std::log (f / minFreq) / std::log (maxFreq / minFreq);
+    const float t = std::log (juce::jmax (f, 1.0f) / minFreq) / std::log (maxFreq / minFreq);
     return r.getX() + t * r.getWidth();
 }
 
@@ -66,56 +61,62 @@ float EqGraph::yForSpectrumDb (float db) const
     return r.getBottom() - t * r.getHeight();
 }
 
-float EqGraph::getParam (const char* id) const
+float EqGraph::getParam (const juce::String& id) const
 {
     return proc.apvts.getRawParameterValue (id)->load();
 }
 
-void EqGraph::setParam (const char* id, float value)
+void EqGraph::setParam (const juce::String& id, float value)
 {
     if (auto* p = proc.apvts.getParameter (id))
         p->setValueNotifyingHost (p->convertTo0to1 (value));
 }
 
-void EqGraph::beginGesture (int i)
+void EqGraph::gesture (int band, bool begin)
 {
-    for (auto* id : { nodes[(size_t) i].freqId, nodes[(size_t) i].gainId })
-        if (id != nullptr)
-            if (auto* p = proc.apvts.getParameter (id)) p->beginChangeGesture();
+    for (auto* what : { "on", "freq", "gain" })
+        if (auto* p = proc.apvts.getParameter (bandId (editSet, band, what)))
+        {
+            if (begin) p->beginChangeGesture();
+            else       p->endChangeGesture();
+        }
 }
 
-void EqGraph::endGesture (int i)
+juce::Point<float> EqGraph::nodePosition (int band) const
 {
-    for (auto* id : { nodes[(size_t) i].freqId, nodes[(size_t) i].gainId })
-        if (id != nullptr)
-            if (auto* p = proc.apvts.getParameter (id)) p->endChangeGesture();
-}
-
-bool EqGraph::nodeVisible (int i) const
-{
-    if (i == 4) return getParam ("monoOn") > 0.5f;
-    return true;
-}
-
-juce::Point<float> EqGraph::nodePosition (int i) const
-{
-    const auto& n = nodes[(size_t) i];
-    const float x = xForFreq (getParam (n.freqId));
-    const float db = n.gainId != nullptr ? getParam (n.gainId) : n.fixedDb;
-    return { x, yForDb (db) };
+    const auto b = proc.readBand (editSet, band);
+    const float db = eq::hasGain (b.type) ? b.gain : 0.0f;
+    return { xForFreq (b.freq), yForDb (db) };
 }
 
 int EqGraph::nodeAt (juce::Point<float> p) const
 {
     int best = -1;
     float bestDist = 12.0f;
-    for (int i = 0; i < (int) nodes.size(); ++i)
+    // primero la seleccionada, para poder agarrarla aunque se superponga
+    for (int k = 0; k < eq::numBands; ++k)
     {
-        if (! nodeVisible (i)) continue;
+        const int i = (k + selectedBand) % eq::numBands;
         const float d = nodePosition (i).getDistanceFrom (p);
         if (d < bestDist) { bestDist = d; best = i; }
     }
     return best;
+}
+
+double EqGraph::responseDb (int set, double freq, int onlyBand) const
+{
+    const double eqSr = proc.eqSampleRate();
+    const bool adapt = getParam ("adaptQ") > 0.5f;
+    const double scale = getParam ("scale") / 100.0;
+
+    double mag = 1.0;
+    for (int b = 0; b < eq::numBands; ++b)
+    {
+        if (onlyBand >= 0 && b != onlyBand) continue;
+        const auto st = eq::compute (proc.readBand (set, b), eqSr, adapt, scale);
+        for (int s = 0; s < st.n; ++s) mag *= eq::magnitude (st.c[(size_t) s], freq, eqSr);
+    }
+    return juce::Decibels::gainToDecibels (mag, -80.0) + getParam ("eqOut");
 }
 
 //==============================================================================
@@ -155,8 +156,9 @@ void EqGraph::paint (juce::Graphics& g)
 {
     g.fillAll (bgCol);
     auto r = plotArea();
-    const double sr = sampleRate();
     const bool eqOn = getParam ("eqOn") > 0.5f;
+    const int mode = proc.eqMode();
+    const double sr = proc.getSampleRate() > 0.0 ? proc.getSampleRate() : 48000.0;
 
     // Grilla de frecuencias
     g.setFont (juce::FontOptions (10.0f));
@@ -192,11 +194,10 @@ void EqGraph::paint (juce::Graphics& g)
         for (float x = r.getX(); x <= r.getRight(); x += 2.0f)
         {
             const float f0 = freqForX (x), f1 = freqForX (x + 2.0f);
-            int b0 = juce::jlimit (1, (int) spectrumDb.size() - 1, (int) (f0 / binHz));
-            int b1 = juce::jlimit (b0, (int) spectrumDb.size() - 1, (int) (f1 / binHz));
+            const int b0 = juce::jlimit (1, (int) spectrumDb.size() - 1, (int) (f0 / binHz));
+            const int b1 = juce::jlimit (b0, (int) spectrumDb.size() - 1, (int) (f1 / binHz));
             float db = specMinDb;
             for (int b = b0; b <= b1; ++b) db = juce::jmax (db, spectrumDb[(size_t) b]);
-            // inclinación de 4.5 dB/oct para que se lea parecido a como suena
             if (db > specMinDb + 1.0f) // sin señal, no levantar el piso
                 db += 4.5f * std::log2 (juce::jmax (f0, 20.0f) / 1000.0f);
             spec.lineTo (x, yForSpectrumDb (db));
@@ -207,81 +208,113 @@ void EqGraph::paint (juce::Graphics& g)
         g.fillPath (spec);
     }
 
-    // Línea de graves mono
+    // Zona de graves mono
     if (getParam ("monoOn") > 0.5f)
     {
         const float x = xForFreq (getParam ("monoFreq"));
-        g.setColour (nodes[4].colour.withAlpha (0.12f));
+        const auto monoCol = juce::Colour (0xffa78bfa);
+        g.setColour (monoCol.withAlpha (0.10f));
         g.fillRect (juce::Rectangle<float>::leftTopRightBottom (r.getX(), r.getY(), x, r.getBottom()));
-        g.setColour (nodes[4].colour.withAlpha (0.6f));
+        g.setColour (monoCol.withAlpha (0.5f));
         const float dashes[] = { 4.0f, 4.0f };
         g.drawDashedLine ({ x, r.getY(), x, r.getBottom() }, dashes, 2, 1.0f);
+        g.setFont (juce::FontOptions (10.0f));
+        g.drawText ("mono", (int) x + 3, (int) r.getY() + 2, 40, 12, juce::Justification::centredLeft);
     }
 
-    // Curva de respuesta
+    auto makeCurve = [&] (int set, int onlyBand)
     {
-        using C = juce::dsp::IIR::Coefficients<float>;
-        const float nyq = (float) sr * 0.45f;
-        auto lim = [nyq] (float f) { return juce::jmin (f, nyq); };
-        std::array<C::Ptr, 5> c {
-            C::makeHighPass (sr, lim (getParam ("hpf")), 0.5412f),
-            C::makeHighPass (sr, lim (getParam ("hpf")), 1.3066f),
-            C::makePeakFilter (sr, lim (getParam ("mudFreq")), getParam ("mudQ"), juce::Decibels::decibelsToGain (getParam ("mudGain"))),
-            C::makePeakFilter (sr, lim (getParam ("presFreq")), 0.8f, juce::Decibels::decibelsToGain (getParam ("presGain"))),
-            C::makeHighShelf (sr, lim (getParam ("airFreq")), 0.707f, juce::Decibels::decibelsToGain (getParam ("airGain")))
-        };
-
         juce::Path curve;
         bool first = true;
         for (float x = r.getX(); x <= r.getRight(); x += 1.0f)
         {
-            const double f = freqForX (x);
-            double mag = 1.0;
-            if (eqOn)
-                for (auto& co : c) mag *= co->getMagnitudeForFrequency (f, sr);
-            const float db = juce::jlimit (-rangeDb * 1.5f, rangeDb * 1.5f, (float) juce::Decibels::gainToDecibels (mag, -60.0));
+            const float db = (float) responseDb (set, freqForX (x), onlyBand);
             const float y = juce::jlimit (r.getY(), r.getBottom(), yForDb (db));
-            if (first) { curve.startNewSubPath (x, y); first = false; } else curve.lineTo (x, y);
+            if (first) { curve.startNewSubPath (x, y); first = false; }
+            else curve.lineTo (x, y);
         }
+        return curve;
+    };
 
+    auto fillToZero = [&] (const juce::Path& curve)
+    {
         juce::Path fill (curve);
         fill.lineTo (r.getRight(), yForDb (0.0f));
         fill.lineTo (r.getX(), yForDb (0.0f));
         fill.closeSubPath();
+        return fill;
+    };
 
+    // Curva del otro canal (L/R o Mid/Side), tenue
+    if (eqOn && mode != 0)
+    {
+        g.setColour (labelCol.withAlpha (0.7f));
+        g.strokePath (makeCurve (1 - editSet, -1), juce::PathStrokeType (1.2f));
+    }
+
+    // Banda seleccionada, sombreada con su color
+    const auto sel = proc.readBand (editSet, selectedBand);
+    if (eqOn && sel.on)
+    {
+        g.setColour (bandColour (selectedBand).withAlpha (0.18f));
+        g.fillPath (fillToZero (makeCurve (editSet, selectedBand)));
+    }
+
+    // Curva total del canal que se edita
+    {
+        const auto curve = makeCurve (editSet, -1);
         const auto col = eqOn ? curveCol : labelCol;
-        g.setColour (col.withAlpha (0.12f));
-        g.fillPath (fill);
+        g.setColour (col.withAlpha (0.10f));
+        g.fillPath (fillToZero (curve));
         g.setColour (col);
         g.strokePath (curve, juce::PathStrokeType (2.0f));
     }
 
-    // Nodos
+    // Nodos: lleno = banda activa, aro = apagada
     g.setFont (juce::FontOptions (11.0f, juce::Font::bold));
-    for (int i = 0; i < (int) nodes.size(); ++i)
+    for (int k = 0; k < eq::numBands; ++k)
     {
-        if (! nodeVisible (i)) continue;
-        const auto& n = nodes[(size_t) i];
+        const int i = (k + selectedBand + 1) % eq::numBands;   // la seleccionada se dibuja arriba
+        const auto b = proc.readBand (editSet, i);
         const auto pos = nodePosition (i);
         const bool active = (i == hoverNode || i == dragNode);
-        const float rad = active ? 8.0f : 6.5f;
-        auto col = (eqOn || i == 4) ? n.colour : labelCol;
+        const bool selected = (i == selectedBand);
+        const float rad = active || selected ? 8.0f : 6.5f;
+        const auto col = eqOn ? bandColour (i) : labelCol;
+        const auto box = juce::Rectangle<float> (pos.x - rad, pos.y - rad, rad * 2, rad * 2);
 
-        g.setColour (col.withAlpha (active ? 1.0f : 0.85f));
-        g.fillEllipse (pos.x - rad, pos.y - rad, rad * 2, rad * 2);
-        g.setColour (bgCol);
-        g.drawText (juce::String (i == 4 ? "M" : juce::String (i + 1)),
-                    juce::Rectangle<float> (pos.x - rad, pos.y - rad, rad * 2, rad * 2), juce::Justification::centred);
+        if (b.on)
+        {
+            g.setColour (col);
+            g.fillEllipse (box);
+            g.setColour (bgCol);
+        }
+        else
+        {
+            g.setColour (bgCol);
+            g.fillEllipse (box);
+            g.setColour (col.withAlpha (0.8f));
+            g.drawEllipse (box.reduced (0.75f), 1.5f);
+        }
+        g.drawText (juce::String (i + 1), box, juce::Justification::centred);
+
+        if (selected)
+        {
+            g.setColour (juce::Colours::white.withAlpha (0.85f));
+            g.drawEllipse (box.expanded (2.5f), 1.2f);
+        }
     }
 
-    // Etiqueta del nodo activo
+    // Etiqueta del nodo bajo el mouse
     const int shown = dragNode >= 0 ? dragNode : hoverNode;
     if (shown >= 0)
     {
-        const auto& n = nodes[(size_t) shown];
-        juce::String txt = utf8 (n.name) + "  " + proc.apvts.getParameter (n.freqId)->getCurrentValueAsText();
-        if (n.gainId != nullptr) txt << "  " << proc.apvts.getParameter (n.gainId)->getCurrentValueAsText();
-        if (n.qId != nullptr)    txt << "  Q " << proc.apvts.getParameter (n.qId)->getCurrentValueAsText();
+        const auto b = proc.readBand (editSet, shown);
+        auto text = [this, shown] (const char* what) { return proc.apvts.getParameter (bandId (editSet, shown, what))->getCurrentValueAsText(); };
+        juce::String txt = juce::String (shown + 1) + ". " + getEqTypeNames()[b.type] + "  " + text ("freq");
+        if (eq::hasGain (b.type)) txt << "  " << text ("gain");
+        txt << "  Q " << text ("q");
+        if (! b.on) txt << "  (apagada)";
 
         g.setFont (juce::FontOptions (12.0f));
         const int w = (int) juce::GlyphArrangement::getStringWidth (g.getCurrentFont(), txt) + 16;
@@ -290,17 +323,24 @@ void EqGraph::paint (juce::Graphics& g)
                        .constrainedWithin (r.toNearestInt().reduced (2));
         g.setColour (juce::Colour (0xee1c1e25));
         g.fillRoundedRectangle (box.toFloat(), 4.0f);
-        g.setColour (n.colour);
+        g.setColour (bandColour (shown));
         g.drawRoundedRectangle (box.toFloat(), 4.0f, 1.0f);
         g.setColour (juce::Colours::white);
         g.drawText (txt, box, juce::Justification::centred);
     }
 
-    if (! eqOn)
+    // Avisos arriba a la derecha
+    juce::StringArray notes;
+    if (! eqOn) notes.add ("EQ desactivado");
+    if (mode == 1) notes.add (editSet == 0 ? "Editando: L" : "Editando: R");
+    if (mode == 2) notes.add (editSet == 0 ? "Editando: Mid" : "Editando: Side");
+    if (eqOn && getParam ("audition") > 0.5f) notes.add (utf8 ("Audición: mantené apretado un punto"));
+    if (eqOn && getParam ("delta") > 0.5f) notes.add ("Delta: solo lo que cambia el EQ");
+    if (! notes.isEmpty())
     {
-        g.setColour (labelCol);
-        g.setFont (juce::FontOptions (12.0f));
-        g.drawText ("EQ desactivado", r.reduced (8).toNearestInt(), juce::Justification::topRight);
+        g.setColour (labelCol.brighter (0.4f));
+        g.setFont (juce::FontOptions (11.5f));
+        g.drawText (notes.joinIntoString ("   |   "), r.reduced (8, 6).toNearestInt(), juce::Justification::topRight);
     }
 
     g.setColour (gridCol.brighter (0.2f));
@@ -328,25 +368,41 @@ void EqGraph::mouseExit (const juce::MouseEvent&)
 void EqGraph::mouseDown (const juce::MouseEvent& e)
 {
     dragNode = nodeAt (e.position);
-    if (dragNode >= 0) beginGesture (dragNode);
+    dragTurnedOn = false;
+    if (dragNode < 0) return;
+
+    selectedBand = dragNode;
+    if (onBandSelected) onBandSelected (dragNode);
+    gesture (dragNode, true);
+
+    if (getParam ("audition") > 0.5f)
+        proc.auditionBand = editSet * eq::numBands + dragNode;
+    repaint();
 }
 
 void EqGraph::mouseDrag (const juce::MouseEvent& e)
 {
     if (dragNode < 0) return;
-    const auto& n = nodes[(size_t) dragNode];
+
+    // Arrastrar una banda apagada la prende (como en el EQ Eight)
+    if (! dragTurnedOn && e.getDistanceFromDragStart() > 3 && ! proc.readBand (editSet, dragNode).on)
+    {
+        setParam (bandId (editSet, dragNode, "on"), 1.0f);
+        dragTurnedOn = true;
+    }
+
     auto r = plotArea();
-    const float x = juce::jlimit (r.getX(), r.getRight(), e.position.x);
-    setParam (n.freqId, freqForX (x));
-    if (n.gainId != nullptr)
-        setParam (n.gainId, dbForY (juce::jlimit (r.getY(), r.getBottom(), e.position.y)));
+    setParam (bandId (editSet, dragNode, "freq"), freqForX (juce::jlimit (r.getX(), r.getRight(), e.position.x)));
+    if (eq::hasGain (proc.readBand (editSet, dragNode).type))
+        setParam (bandId (editSet, dragNode, "gain"), dbForY (juce::jlimit (r.getY(), r.getBottom(), e.position.y)));
     repaint();
 }
 
 void EqGraph::mouseUp (const juce::MouseEvent&)
 {
-    if (dragNode >= 0) endGesture (dragNode);
+    if (dragNode >= 0) gesture (dragNode, false);
     dragNode = -1;
+    proc.auditionBand = -1;
     repaint();
 }
 
@@ -354,8 +410,8 @@ void EqGraph::mouseDoubleClick (const juce::MouseEvent& e)
 {
     // Doble clic: la ganancia del nodo vuelve a 0 dB
     const int n = nodeAt (e.position);
-    if (n >= 0 && nodes[(size_t) n].gainId != nullptr)
-        if (auto* p = proc.apvts.getParameter (nodes[(size_t) n].gainId))
+    if (n >= 0)
+        if (auto* p = proc.apvts.getParameter (bandId (editSet, n, "gain")))
         {
             p->beginChangeGesture();
             p->setValueNotifyingHost (p->convertTo0to1 (0.0f));
@@ -365,15 +421,15 @@ void EqGraph::mouseDoubleClick (const juce::MouseEvent& e)
 
 void EqGraph::mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWheelDetails& w)
 {
-    // Rueda sobre el nodo de barro: cambia el Q
+    // Rueda sobre un nodo: cambia el Q
     const int n = nodeAt (e.position);
-    if (n >= 0 && nodes[(size_t) n].qId != nullptr)
-        if (auto* p = proc.apvts.getParameter (nodes[(size_t) n].qId))
-        {
-            const float q = getParam (nodes[(size_t) n].qId) * (1.0f + w.deltaY * 0.5f);
-            p->beginChangeGesture();
-            p->setValueNotifyingHost (p->convertTo0to1 (q));
-            p->endChangeGesture();
-            repaint();
-        }
+    if (n < 0) return;
+    if (auto* p = proc.apvts.getParameter (bandId (editSet, n, "q")))
+    {
+        const float q = getParam (bandId (editSet, n, "q")) * (1.0f + w.deltaY * 0.5f);
+        p->beginChangeGesture();
+        p->setValueNotifyingHost (p->convertTo0to1 (q));
+        p->endChangeGesture();
+        repaint();
+    }
 }

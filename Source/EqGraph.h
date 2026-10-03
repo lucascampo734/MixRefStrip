@@ -2,9 +2,10 @@
 
 #include "PluginProcessor.h"
 #include <array>
+#include <functional>
 #include <vector>
 
-// Gráfico del EQ estilo EQ Eight: curva de respuesta, analizador de espectro
+// Gráfico del EQ de 8 bandas: curva de respuesta, analizador de espectro
 // y nodos que se arrastran con el mouse.
 class EqGraph : public juce::Component
 {
@@ -22,17 +23,13 @@ public:
     void mouseDoubleClick (const juce::MouseEvent&) override;
     void mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
 
-private:
-    struct Node
-    {
-        const char* name;
-        const char* freqId;
-        const char* gainId;   // nullptr si no tiene ganancia
-        const char* qId;      // nullptr si no tiene Q
-        juce::Colour colour;
-        float fixedDb;        // altura fija si no tiene ganancia
-    };
+    int editSet = 0;                          // 0 = A (estéreo / L / Mid), 1 = B (R / Side)
+    int selectedBand = 0;
+    std::function<void (int)> onBandSelected;
 
+    static juce::Colour bandColour (int band);
+
+private:
     juce::Rectangle<float> plotArea() const;
     float xForFreq (float f) const;
     float freqForX (float x) const;
@@ -40,20 +37,17 @@ private:
     float dbForY (float y) const;
     float yForSpectrumDb (float db) const;
 
-    bool nodeVisible (int i) const;
-    juce::Point<float> nodePosition (int i) const;
+    juce::Point<float> nodePosition (int band) const;
     int nodeAt (juce::Point<float> p) const;
+    double responseDb (int set, double freq, int onlyBand = -1) const;
 
-    float getParam (const char* id) const;
-    void setParam (const char* id, float value);
-    void beginGesture (int node);
-    void endGesture (int node);
-
-    double sampleRate() const;
+    float getParam (const juce::String& id) const;
+    void setParam (const juce::String& id, float value);
+    void gesture (int band, bool begin);
 
     MixRefProcessor& proc;
-    std::array<Node, 5> nodes;
     int hoverNode = -1, dragNode = -1;
+    bool dragTurnedOn = false;
 
     static constexpr float minFreq = 20.0f, maxFreq = 20000.0f, rangeDb = 18.0f;
     static constexpr float specMinDb = -90.0f, specMaxDb = 0.0f;

@@ -1,5 +1,4 @@
 #include "PluginEditor.h"
-#include <array>
 
 namespace Colours
 {
@@ -33,12 +32,14 @@ MixRefEditor::MixRefEditor (MixRefProcessor& p)
     lnf.setColour (juce::PopupMenu::backgroundColourId, Colours::panel);
     lnf.setColour (juce::PopupMenu::highlightedBackgroundColourId, Colours::accent);
     lnf.setColour (juce::TextButton::buttonColourId, Colours::edge);
+    lnf.setColour (juce::TextButton::buttonOnColourId, Colours::accent);
     lnf.setColour (juce::TextButton::textColourOffId, Colours::text);
+    lnf.setColour (juce::TextButton::textColourOnId, juce::Colours::white);
     lnf.setColour (juce::ToggleButton::textColourId, Colours::text);
     lnf.setColour (juce::ToggleButton::tickColourId, Colours::accent);
     setLookAndFeel (&lnf);
 
-    // Elemento: menu agrupado como en la hoja de referencia
+    // Elemento: menú agrupado como en la hoja de referencia
     {
         const auto& all = getElementPresets();
         juce::String lastGroup;
@@ -70,7 +71,7 @@ MixRefEditor::MixRefEditor (MixRefProcessor& p)
     addAndMakeVisible (elementBox);
 
     presetButton.setTooltip ("Carga el EQ, graves mono y ducker sugeridos para el elemento elegido");
-    presetButton.onClick = [this] { proc.loadElementPreset(); };
+    presetButton.onClick = [this] { proc.loadElementPreset(); selectBand (0); };
     addAndMakeVisible (presetButton);
 
     matchButton.onClick = [this] { proc.matchTrimToTarget (maxDb); maxDb = -100.0f; };
@@ -79,38 +80,108 @@ MixRefEditor::MixRefEditor (MixRefProcessor& p)
     addAndMakeVisible (resetButton);
 
     // Interruptores
-    for (auto* b : { &eqOnButton, &monoButton, &duckOnButton }) addAndMakeVisible (*b);
-    eqOnAtt   = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (proc.apvts, "eqOn", eqOnButton);
-    monoAtt   = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (proc.apvts, "monoOn", monoButton);
-    duckOnAtt = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (proc.apvts, "duckOn", duckOnButton);
+    for (auto* b : { &eqOnButton, &monoButton, &duckOnButton, &adaptQButton, &hqButton }) addAndMakeVisible (*b);
+    eqOnAtt   = std::make_unique<APVTS::ButtonAttachment> (proc.apvts, "eqOn", eqOnButton);
+    monoAtt   = std::make_unique<APVTS::ButtonAttachment> (proc.apvts, "monoOn", monoButton);
+    duckOnAtt = std::make_unique<APVTS::ButtonAttachment> (proc.apvts, "duckOn", duckOnButton);
+    adaptQAtt = std::make_unique<APVTS::ButtonAttachment> (proc.apvts, "adaptQ", adaptQButton);
+    hqAtt     = std::make_unique<APVTS::ButtonAttachment> (proc.apvts, "hq", hqButton);
+    adaptQButton.setTooltip ("El Q de las campanas se cierra cuando subís mucha ganancia");
+    hqButton.setTooltip ("Procesa el EQ al doble de frecuencia de muestreo: agudos más naturales (suma un poco de latencia)");
 
-    // Perillas
+    auditionButton.setButtonText (utf8 ("Audición"));
+    auditionButton.setClickingTogglesState (true);
+    deltaButton.setClickingTogglesState (true);
+    auditionButton.setTooltip (utf8 ("Con esto prendido, mantené apretado un punto o una perilla de banda para escuchar solo esa zona"));
+    deltaButton.setTooltip ("Escuchás solo lo que el EQ saca o agrega");
+    auditionAtt = std::make_unique<APVTS::ButtonAttachment> (proc.apvts, "audition", auditionButton);
+    deltaAtt    = std::make_unique<APVTS::ButtonAttachment> (proc.apvts, "delta", deltaButton);
+    addAndMakeVisible (auditionButton);
+    addAndMakeVisible (deltaButton);
+
+    // Modo estéreo / L-R / M-S y canal que se edita
+    modeBox.addItemList ({ utf8 ("Estéreo"), "L/R", "Mid/Side" }, 1);
+    modeAtt = std::make_unique<APVTS::ComboBoxAttachment> (proc.apvts, "eqMode", modeBox);
+    addAndMakeVisible (modeBox);
+
+    for (int i = 0; i < 2; ++i)
+    {
+        auto& b = i == 0 ? editAButton : editBButton;
+        b.setClickingTogglesState (true);
+        b.setRadioGroupId (42);
+        b.onClick = [this, i]
+        {
+            if (auto* param = proc.apvts.getParameter ("eqEdit"))
+            {
+                param->beginChangeGesture();
+                param->setValueNotifyingHost (param->convertTo0to1 ((float) i));
+                param->endChangeGesture();
+            }
+            syncEqEditState();
+        };
+        addChildComponent (b);
+    }
+
+    // Botones de banda 1..8 (prenden/apagan y seleccionan)
+    for (int i = 0; i < eq::numBands; ++i)
+    {
+        auto& b = bandButtons[(size_t) i];
+        b.setButtonText (juce::String (i + 1));
+        b.setClickingTogglesState (true);
+        b.setColour (juce::TextButton::buttonOnColourId, EqGraph::bandColour (i));
+        b.setColour (juce::TextButton::textColourOnId, Colours::bg);
+        b.onUserClick = [this, i] { selectBand (i); };
+        addAndMakeVisible (b);
+    }
+
+    // Controles de la banda seleccionada
+    bandLabel.setJustificationType (juce::Justification::centredLeft);
+    bandLabel.setFont (juce::FontOptions (13.0f, juce::Font::bold));
+    addAndMakeVisible (bandLabel);
+    typeBox.addItemList (getEqTypeNames(), 1);
+    addAndMakeVisible (typeBox);
+
+    for (auto* k : { &freqKnob, &gainKnob, &qKnob })
+    {
+        k->slider.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
+        k->slider.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 76, 18);
+        k->slider.onDragStart = [this] { startAudition(); };
+        k->slider.onDragEnd   = [this] { stopAudition(); };
+        k->label.setJustificationType (juce::Justification::centred);
+        k->label.setFont (juce::FontOptions (12.5f));
+        addAndMakeVisible (k->slider);
+        addAndMakeVisible (k->label);
+    }
+    freqKnob.label.setText ("Frecuencia", juce::dontSendNotification);
+    gainKnob.label.setText ("Ganancia", juce::dontSendNotification);
+    qKnob.label.setText ("Q", juce::dontSendNotification);
+
+    // Gráfico
+    eqGraph.onBandSelected = [this] (int b) { selectBand (b); };
+    addAndMakeVisible (eqGraph);
+
+    // Perillas fijas
     trimKnob = &addKnob ("trim", "Ganancia");
-
-    eqKnobs = { &addKnob ("hpf", "Pasa altos"),
-                &addKnob ("mudFreq", "Barro Hz"),
-                &addKnob ("mudGain", "Barro dB"),
-                &addKnob ("mudQ", "Barro Q"),
-                &addKnob ("presFreq", "Presencia Hz"),
-                &addKnob ("presGain", "Presencia dB"),
-                &addKnob ("airFreq", "Aire Hz"),
-                &addKnob ("airGain", "Aire dB"),
-                &addKnob ("monoFreq", "Mono hasta") };
-
+    eqGlobalKnobs = { &addKnob ("scale", "Escala"),
+                      &addKnob ("eqOut", "Salida EQ"),
+                      &addKnob ("monoFreq", "Mono hasta") };
     duckKnobs = { &addKnob ("duckDepth", "Profundidad"),
                   &addKnob ("duckThresh", "Umbral"),
                   &addKnob ("duckAttack", "Ataque"),
                   &addKnob ("duckRelease", "Release") };
 
-    addAndMakeVisible (eqGraph);
+    syncEqEditState();
+    bindBandButtons();
+    bindBandControls();
 
-    setSize (1000, 620);
+    setSize (1100, 680);
     startTimerHz (30);
 }
 
 MixRefEditor::~MixRefEditor()
 {
     stopTimer();
+    proc.auditionBand = -1;
     setLookAndFeel (nullptr);
 }
 
@@ -122,11 +193,86 @@ MixRefEditor::Knob& MixRefEditor::addKnob (const juce::String& paramId, const ju
     k->label.setText (text, juce::dontSendNotification);
     k->label.setJustificationType (juce::Justification::centred);
     k->label.setFont (juce::FontOptions (12.5f));
-    k->attachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (proc.apvts, paramId, k->slider);
+    k->attachment = std::make_unique<APVTS::SliderAttachment> (proc.apvts, paramId, k->slider);
     addAndMakeVisible (k->slider);
     addAndMakeVisible (k->label);
     knobs.push_back (std::move (k));
     return *knobs.back();
+}
+
+//==============================================================================
+void MixRefEditor::selectBand (int band)
+{
+    selectedBand = juce::jlimit (0, eq::numBands - 1, band);
+    eqGraph.selectedBand = selectedBand;
+    bindBandControls();
+    repaint();
+}
+
+void MixRefEditor::bindBandControls()
+{
+    typeAtt.reset();
+    freqKnob.attachment.reset();
+    gainKnob.attachment.reset();
+    qKnob.attachment.reset();
+
+    typeAtt = std::make_unique<APVTS::ComboBoxAttachment> (proc.apvts, bandId (editSet, selectedBand, "type"), typeBox);
+    freqKnob.attachment = std::make_unique<APVTS::SliderAttachment> (proc.apvts, bandId (editSet, selectedBand, "freq"), freqKnob.slider);
+    gainKnob.attachment = std::make_unique<APVTS::SliderAttachment> (proc.apvts, bandId (editSet, selectedBand, "gain"), gainKnob.slider);
+    qKnob.attachment    = std::make_unique<APVTS::SliderAttachment> (proc.apvts, bandId (editSet, selectedBand, "q"), qKnob.slider);
+
+    bandLabel.setText ("Banda " + juce::String (selectedBand + 1), juce::dontSendNotification);
+    bandLabel.setColour (juce::Label::textColourId, EqGraph::bandColour (selectedBand));
+    const auto col = EqGraph::bandColour (selectedBand);
+    for (auto* k : { &freqKnob, &gainKnob, &qKnob })
+        k->slider.setColour (juce::Slider::rotarySliderFillColourId, col);
+}
+
+void MixRefEditor::bindBandButtons()
+{
+    for (int i = 0; i < eq::numBands; ++i)
+    {
+        bandButtonAtts[(size_t) i].reset();
+        bandButtonAtts[(size_t) i] = std::make_unique<APVTS::ButtonAttachment> (proc.apvts, bandId (editSet, i, "on"), bandButtons[(size_t) i]);
+    }
+}
+
+void MixRefEditor::syncEqEditState()
+{
+    const int mode = proc.eqMode();
+    const int wanted = mode == 0 ? 0 : juce::roundToInt (proc.apvts.getRawParameterValue ("eqEdit")->load());
+
+    if (mode != shownMode)
+    {
+        shownMode = mode;
+        editAButton.setVisible (mode != 0);
+        editBButton.setVisible (mode != 0);
+        editAButton.setButtonText (mode == 2 ? "Mid" : "L");
+        editBButton.setButtonText (mode == 2 ? "Side" : "R");
+    }
+
+    editAButton.setToggleState (wanted == 0, juce::dontSendNotification);
+    editBButton.setToggleState (wanted == 1, juce::dontSendNotification);
+
+    if (wanted != editSet)
+    {
+        editSet = wanted;
+        eqGraph.editSet = editSet;
+        bindBandButtons();
+        bindBandControls();
+        repaint();
+    }
+}
+
+void MixRefEditor::startAudition()
+{
+    if (proc.apvts.getRawParameterValue ("audition")->load() > 0.5f)
+        proc.auditionBand = editSet * eq::numBands + selectedBand;
+}
+
+void MixRefEditor::stopAudition()
+{
+    proc.auditionBand = -1;
 }
 
 void MixRefEditor::syncElementBox()
@@ -143,10 +289,17 @@ void MixRefEditor::syncElementBox()
 void MixRefEditor::timerCallback()
 {
     syncElementBox();
+    syncEqEditState();
+
+    // Ganancia solo en campana y shelves
+    const bool gainUsed = eq::hasGain (proc.readBand (editSet, selectedBand).type);
+    gainKnob.slider.setEnabled (gainUsed);
+    gainKnob.slider.setAlpha (gainUsed ? 1.0f : 0.35f);
+    gainKnob.label.setAlpha (gainUsed ? 1.0f : 0.35f);
 
     const float peakLin = proc.meterPeak.exchange (0.0f);
     const float peakDb = juce::Decibels::gainToDecibels (peakLin, -100.0f);
-    levelDb = peakDb > levelDb ? peakDb : juce::jmax (peakDb, levelDb - 0.8f); // caida ~24 dB/s
+    levelDb = peakDb > levelDb ? peakDb : juce::jmax (peakDb, levelDb - 0.8f);
     maxDb = juce::jmax (maxDb, peakDb);
 
     const float gr = proc.meterGR.exchange (0.0f);
@@ -167,7 +320,6 @@ static juce::Colour statusColour (float db, const ElementPreset& e)
     if (db > e.highDb + 2.0f)       return Colours::bad;
     if (db > e.highDb)              return Colours::warn;
     if (db >= e.lowDb)              return Colours::ok;
-    if (db >= e.lowDb - 3.0f)       return Colours::warn;
     return Colours::warn;
 }
 
@@ -192,18 +344,15 @@ void MixRefEditor::paintMeter (juce::Graphics& g, juce::Rectangle<int> area)
     g.setColour (Colours::bg);
     g.fillRoundedRectangle (r, 4.0f);
 
-    // Zona objetivo
     g.setColour (Colours::ok.withAlpha (0.18f));
     g.fillRect (juce::Rectangle<float>::leftTopRightBottom (r.getX(), yFor (e.highDb), r.getRight(), yFor (e.lowDb)));
 
-    // Barra de nivel
     if (levelDb > meterMinDb)
     {
         g.setColour (statusColour (levelDb, e));
         g.fillRect (juce::Rectangle<float>::leftTopRightBottom (r.getX() + 4, yFor (levelDb), r.getRight() - 4, r.getBottom()));
     }
 
-    // Linea de objetivo y pico maximo
     g.setColour (Colours::text);
     g.drawHorizontalLine ((int) yFor (e.targetDb), r.getX() - 6, r.getRight() + 6);
     if (maxDb > meterMinDb)
@@ -212,7 +361,6 @@ void MixRefEditor::paintMeter (juce::Graphics& g, juce::Rectangle<int> area)
         g.fillRect (r.getX(), yFor (maxDb) - 1.0f, r.getWidth(), 2.0f);
     }
 
-    // Escala
     g.setFont (juce::FontOptions (10.5f));
     for (float db : { 0.0f, -6.0f, -12.0f, -18.0f, -24.0f, -30.0f, -36.0f, -42.0f, -48.0f })
     {
@@ -244,22 +392,21 @@ void MixRefEditor::paintDuckMeter (juce::Graphics& g, juce::Rectangle<int> area)
     g.setColour (hasSc ? Colours::ok : Colours::warn);
     g.fillEllipse (r.getX(), r.getY() + 4, 9, 9);
     g.setColour (Colours::text);
-    g.drawText (hasSc ? utf8 ("Sidechain: recibiendo señal (") + juce::String (scDb, 0) + " dB)"
-                      : utf8 ("Sidechain: sin señal"),
-                r.withTrimmedLeft (16).removeFromTop (18), juce::Justification::centredLeft);
+    g.drawFittedText (hasSc ? utf8 ("Sidechain: recibiendo señal (") + juce::String (scDb, 0) + " dB)"
+                            : utf8 ("Sidechain: sin señal"),
+                      r.withTrimmedLeft (16).removeFromTop (34).toNearestInt(), juce::Justification::topLeft, 2);
 }
 
 void MixRefEditor::paint (juce::Graphics& g)
 {
     g.fillAll (Colours::bg);
 
-    // Encabezado
     g.setColour (Colours::text);
     g.setFont (juce::FontOptions (22.0f, juce::Font::bold));
     g.drawText ("MixRef Strip", header.withTrimmedLeft (20), juce::Justification::centredLeft);
     g.setColour (Colours::dim);
     g.setFont (juce::FontOptions (12.0f));
-    g.drawText ("Referencia: kick a -10 dBFS", header.withTrimmedLeft (170), juce::Justification::centredLeft);
+    g.drawText ("v2.0  |  Referencia: kick a -10 dBFS", header.withTrimmedLeft (170), juce::Justification::centredLeft);
 
     for (auto panel : { meterPanel, eqPanel, duckPanel })
     {
@@ -276,7 +423,6 @@ void MixRefEditor::paint (juce::Graphics& g)
     paintMeter (g, meterArea);
     paintDuckMeter (g, duckMeterArea);
 
-    // Lecturas al lado del medidor
     const auto& e = proc.currentPreset();
     auto info = juce::Rectangle<int> (meterArea.getRight() + 16, meterArea.getY(), meterPanel.getRight() - meterArea.getRight() - 26, 120);
     g.setFont (juce::FontOptions (12.0f));
@@ -292,10 +438,26 @@ void MixRefEditor::paint (juce::Graphics& g)
     g.setColour (statusColour (maxDb, e));
     g.drawFittedText (statusText (maxDb, e), info.removeFromTop (34), juce::Justification::topLeft, 2);
 
+    // separador entre controles de banda y globales del EQ
+    if (! eqGlobalKnobs.empty())
+    {
+        const int x = eqGlobalKnobs[0]->label.getX() - 8;
+        g.setColour (Colours::edge);
+        g.drawVerticalLine (x, (float) qKnob.label.getY(), (float) qKnob.slider.getBottom());
+    }
+
     g.setColour (Colours::dim);
     g.setFont (juce::FontOptions (11.0f));
     g.drawText (utf8 ("Valores orientativos: escuchá y compará con tus referencias."),
                 getLocalBounds().removeFromBottom (22).withTrimmedLeft (20), juce::Justification::centredLeft);
+}
+
+void MixRefEditor::paintOverChildren (juce::Graphics& g)
+{
+    // Marco blanco en el botón de la banda seleccionada
+    auto r = bandButtons[(size_t) selectedBand].getBounds().toFloat().expanded (2.0f);
+    g.setColour (juce::Colours::white.withAlpha (0.9f));
+    g.drawRoundedRectangle (r, 5.0f, 1.5f);
 }
 
 void MixRefEditor::resized()
@@ -305,17 +467,22 @@ void MixRefEditor::resized()
     area.removeFromBottom (22);
     area.reduce (14, 0);
 
-    // Selector de elemento en el encabezado
     auto h = header.reduced (14, 13);
     presetButton.setBounds (h.removeFromRight (130));
     h.removeFromRight (8);
     elementBox.setBounds (h.removeFromRight (230));
 
-    meterPanel = area.removeFromLeft (250);
+    meterPanel = area.removeFromLeft (240);
     area.removeFromLeft (10);
-    duckPanel = area.removeFromRight (220);
+    duckPanel = area.removeFromRight (200);
     area.removeFromRight (10);
     eqPanel = area;
+
+    auto placeKnob = [] (Knob* k, juce::Rectangle<int> cell)
+    {
+        k->label.setBounds (cell.removeFromTop (16));
+        k->slider.setBounds (cell);
+    };
 
     // Panel de nivel
     {
@@ -323,7 +490,7 @@ void MixRefEditor::resized()
         r.removeFromTop (28);
         meterArea = juce::Rectangle<int> (r.getX() + 34, r.getY() + 6, 34, r.getHeight() - 12);
         auto right = r.withTrimmedLeft (meterArea.getRight() - r.getX() + 12);
-        right.removeFromTop (130);
+        right.removeFromTop (140);
         trimKnob->label.setBounds (right.removeFromTop (16));
         trimKnob->slider.setBounds (right.removeFromTop (92).withSizeKeepingCentre (96, 92));
         right.removeFromTop (8);
@@ -332,42 +499,62 @@ void MixRefEditor::resized()
         resetButton.setBounds (right.removeFromTop (24));
     }
 
-    auto placeKnob = [] (Knob* k, juce::Rectangle<int> cell)
-    {
-        k->label.setBounds (cell.removeFromTop (16));
-        k->slider.setBounds (cell);
-    };
-
-    // Panel EQ: gráfico arriba, perillas abajo (5 + 4)
+    // Panel EQ
     {
         auto r = eqPanel.reduced (12);
-        auto top = r.removeFromTop (24);
-        eqOnButton.setBounds (top.removeFromLeft (70));
-        top.removeFromLeft (10);
-        monoButton.setBounds (top.removeFromLeft (130));
-        r.removeFromTop (8);
-        eqGraph.setBounds (r.removeFromTop (220));
-        r.removeFromTop (8);
 
-        const int rowH = r.getHeight() / 2;
-        const int colW = r.getWidth() / 5;
-        const std::array<int, 5> row1 { 0, 1, 2, 3, 8 };   // HPF, barro Hz/dB/Q, mono
-        const std::array<int, 4> row2 { 4, 5, 6, 7 };      // presencia y aire
-        for (int c = 0; c < 5; ++c)
-            placeKnob (eqKnobs[(size_t) row1[(size_t) c]], { r.getX() + c * colW, r.getY(), colW, rowH });
-        const int offset = colW / 2;
-        for (int c = 0; c < 4; ++c)
-            placeKnob (eqKnobs[(size_t) row2[(size_t) c]], { r.getX() + offset + c * colW, r.getY() + rowH, colW, rowH });
+        auto top = r.removeFromTop (26);
+        eqOnButton.setBounds (top.removeFromLeft (60));
+        monoButton.setBounds (top.removeFromLeft (125));
+        editBButton.setBounds (top.removeFromRight (52));
+        top.removeFromRight (4);
+        editAButton.setBounds (top.removeFromRight (52));
+        top.removeFromRight (8);
+        modeBox.setBounds (top.removeFromRight (110));
+        r.removeFromTop (6);
+
+        auto bottom = r.removeFromBottom (24);
+        adaptQButton.setBounds (bottom.removeFromLeft (115));
+        hqButton.setBounds (bottom.removeFromLeft (160));
+        r.removeFromBottom (6);
+
+        auto knobRow = r.removeFromBottom (118);
+        r.removeFromBottom (8);
+        auto bandRow = r.removeFromBottom (30);
+        r.removeFromBottom (8);
+        eqGraph.setBounds (r);
+
+        for (int i = 0; i < eq::numBands; ++i)
+        {
+            bandButtons[(size_t) i].setBounds (bandRow.removeFromLeft (34).reduced (0, 2));
+            bandRow.removeFromLeft (5);
+        }
+        deltaButton.setBounds (bandRow.removeFromRight (70).reduced (0, 2));
+        bandRow.removeFromRight (6);
+        auditionButton.setBounds (bandRow.removeFromRight (90).reduced (0, 2));
+
+        auto typeCol = knobRow.removeFromLeft (112);
+        bandLabel.setBounds (typeCol.removeFromTop (22));
+        typeCol.removeFromTop (6);
+        typeBox.setBounds (typeCol.removeFromTop (26));
+        knobRow.removeFromLeft (6);
+
+        const int kw = 72;
+        placeKnob (&freqKnob, knobRow.removeFromLeft (kw));
+        placeKnob (&gainKnob, knobRow.removeFromLeft (kw));
+        placeKnob (&qKnob, knobRow.removeFromLeft (kw));
+        knobRow.removeFromLeft (16);
+        for (auto* k : eqGlobalKnobs) placeKnob (k, knobRow.removeFromLeft (kw));
     }
 
-    // Panel ducker: 2 x 2 + medidor
+    // Panel ducker
     {
         auto r = duckPanel.reduced (12);
         duckOnButton.setBounds (r.removeFromTop (24).removeFromLeft (120));
         r.removeFromTop (6);
-        duckMeterArea = r.removeFromBottom (76);
+        duckMeterArea = r.removeFromBottom (84);
         const int rowH = r.getHeight() / 2, colW = r.getWidth() / 2;
         for (int i = 0; i < 4; ++i)
-            placeKnob (duckKnobs[(size_t) i], { r.getX() + (i % 2) * colW, r.getY() + (i / 2) * rowH, colW, rowH });
+            placeKnob (duckKnobs[(size_t) i], { r.getX() + (i % 2) * colW, r.getY() + (i / 2) * rowH, colW, juce::jmin (rowH, 130) });
     }
 }

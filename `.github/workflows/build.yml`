@@ -1,0 +1,35 @@
+name: Compilar MixRef Strip (Mac)
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build-mac:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configurar
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Compilar (VST3 + AU, Apple Silicon e Intel)
+        run: cmake --build build --config Release -j 3
+
+      - name: Firmar y empaquetar
+        run: |
+          OUT="build/MixRefStrip_artefacts/Release"
+          mkdir -p dist
+          cp -R "$OUT/VST3/MixRef Strip.vst3" dist/
+          cp -R "$OUT/AU/MixRef Strip.component" dist/
+          codesign --force --deep -s - "dist/MixRef Strip.vst3"
+          codesign --force --deep -s - "dist/MixRef Strip.component"
+          cd dist && ditto -c -k --keepParent "MixRef Strip.vst3" "../MixRefStrip-VST3.zip"
+          ditto -c -k --keepParent "MixRef Strip.component" "../MixRefStrip-AU.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MixRefStrip-Mac
+          path: |
+            MixRefStrip-VST3.zip
+            MixRefStrip-AU.zip
